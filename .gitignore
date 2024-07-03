@@ -20,6 +20,9 @@
 !Makefile
 !.tool-versions
 !.github/workflows/static-checks-go.yml
+!.goreleaser.yaml
+!.github/dependabot.yml
+!.github/workflows/release.yml
 
 # ...even if they are in subdirectories
 !*/
