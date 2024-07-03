@@ -63,7 +63,7 @@ func StartWatchDirs(
 				if !ok {
 					return
 				}
-				// Check the filename against the list of include globs.
+				// Check the filename against the list of include regexes.
 				if slices.IndexFunc(includeFileRegexes, func(r regexp.Regexp) bool {
 					return r.MatchString(ev.Name)
 				}) > -1 {

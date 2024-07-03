@@ -32,7 +32,7 @@ func main() {
 			l.Errorf(logger.ERROR, err.Error())
 			os.Exit(1)
 		} else if len(cfg.IncludeFileRegexes()) < 1 {
-			l.Errorf(logger.WARNING, "Warning, no include file globs detected.")
+			l.Errorf(logger.WARNING, "Warning, no include file regexes detected.")
 			os.Exit(1)
 		} else {
 			startProcessing(wd, l, cfg)
