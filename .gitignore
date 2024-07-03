@@ -19,6 +19,7 @@
 
 !Makefile
 !.tool-versions
+!.github/workflows/static-checks-go.yml
 
 # ...even if they are in subdirectories
 !*/
