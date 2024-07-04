@@ -35,7 +35,6 @@ func StartEventProcessing(
 		RENAME,
 		WRITE,
 	}
-	slices.Sort(includeOps)
 	for {
 		select {
 		case ev, ok := <-changes:
@@ -43,7 +42,7 @@ func StartEventProcessing(
 				l.Errorf(logger.DEBUG, "Event: %v", ev)
 				shouldReport := false
 				for _, op := range ev.Ops {
-					if slices.Index(includeOps, op) > -1 {
+					if slices.Contains(includeOps, op) {
 						shouldReport = true
 						break
 					}
