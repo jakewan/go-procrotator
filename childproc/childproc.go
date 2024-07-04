@@ -126,6 +126,9 @@ func stopChildProcess(l logger.Logger, cfg runtimeconfig.Config, st *state) erro
 			l.Errorf(logger.DEBUG, "Child process quit in %s", time.Since(shutdownStaredAt))
 			return nil
 		}
+	} else if st.currentProcState == procStateNotStarted {
+		l.Errorf(logger.WARNING, "Current process state: not started")
+		return nil
 	} else {
 		return fmt.Errorf("unexpected process state: %s", st.currentProcState.String())
 	}
@@ -147,6 +150,9 @@ func startChildProcess(
 	for _, c := range cfg.PreambleCommands() {
 		if err := runPreambleCommand(c); err != nil {
 			l.Errorf(logger.ERROR, "Error running preamble command: %s", err)
+			st.lastRestartAt = time.Now()
+			st.currentProcState = procStateNotStarted
+			return nil
 		}
 	}
 	if cmd, err := runServerCommand(cfg.ServerCommand()); err != nil {

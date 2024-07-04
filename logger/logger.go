@@ -47,7 +47,6 @@ func NewLogger(appName string, errStream io.Writer) Logger {
 	return &logger{
 		appName:   appName,
 		errStream: errStream,
-		output:    color.New(color.FgWhite, color.Faint).FprintlnFunc(),
 	}
 }
 
@@ -55,8 +54,13 @@ type logger struct {
 	appName    string
 	errStream  io.Writer
 	errorLevel LogLevel
-	output     func(w io.Writer, a ...interface{})
 }
+
+var (
+	output        = color.New(color.FgWhite, color.Faint).FprintlnFunc()
+	outputError   = color.New(color.FgRed, color.Faint).FprintlnFunc()
+	outputWarning = color.New(color.FgYellow, color.Faint).FprintlnFunc()
+)
 
 // SetErrorLevel implements Logger.
 func (l *logger) SetErrorLevel(level LogLevel) {
@@ -66,7 +70,14 @@ func (l *logger) SetErrorLevel(level LogLevel) {
 // Errorf implements Logger.
 func (l *logger) Errorf(level LogLevel, format string, a ...any) {
 	if level >= l.errorLevel {
-		l.output(
+		fn := output
+		switch level {
+		case WARNING:
+			fn = outputWarning
+		case ERROR:
+			fn = outputError
+		}
+		fn(
 			l.errStream,
 			l.appName,
 			level.String(),
