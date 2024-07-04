@@ -45,17 +45,39 @@ func startProcessing(wd string, l logger.Logger, cfg runtimeconfig.Config) {
 		l.Errorf(logger.ERROR, err.Error())
 		os.Exit(1)
 	} else {
-		startBackgroundProcesses(l, cfg, watchDirs)
+		startFilesystemWatcher(l, cfg, watchDirs)
 	}
 }
 
-func startBackgroundProcesses(l logger.Logger, cfg runtimeconfig.Config, watchDirs []string) {
-	watchDirsQuitChan := make(chan bool)
+func startFilesystemWatcher(l logger.Logger, cfg runtimeconfig.Config, watchDirs []string) {
+	if w, err := fsnotify.NewWatcher(); err != nil {
+		l.Errorf(logger.ERROR, err.Error())
+		os.Exit(1)
+	} else {
+		for _, d := range watchDirs {
+			if err := w.Add(d); err != nil {
+				l.Errorf(logger.ERROR, err.Error())
+				os.Exit(1)
+			}
+		}
+		startBackgroundProcesses(l, cfg, w)
+	}
+}
+
+func startBackgroundProcesses(
+	l logger.Logger,
+	cfg runtimeconfig.Config,
+	watcher *fsnotify.Watcher,
+) {
+	defer watcher.Close()
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	trapSignalsDone := make(chan bool, 1)
-	childErrors := make(chan error)
+	watchDirEvents := make(chan watchdirs.WatcherEvent)
+	watchDirErrors := make(chan error)
 	fileChangedChan := make(chan watchdirs.FileChangedEvent)
+	quitWatchDirs := make(chan bool)
+	watchDirsDone := make(chan bool)
 
 	childProcManagerDone := make(chan bool)
 	go childproc.StartChildProcess(
@@ -65,37 +87,88 @@ func startBackgroundProcesses(l logger.Logger, cfg runtimeconfig.Config, watchDi
 		childProcManagerDone,
 	)
 
-	l.Errorf(logger.DEBUG, "Starting to watch directories")
-	watchDirsDone := make(chan bool)
-	go watchdirs.StartWatchDirs(
+	eventProcessingDone := make(chan bool)
+	go watchdirs.StartEventProcessing(
 		newWatchDirsDeps(l),
-		watchDirs,
 		cfg.IncludeFileRegexes(),
 		cfg.ExcludeFileRegexes(),
 		fileChangedChan,
-		childErrors,
-		watchDirsQuitChan,
+		watchDirEvents,
+		watchDirErrors,
+		eventProcessingDone,
+	)
+	l.Errorf(logger.DEBUG, "Waiting for file change events")
+
+	go startWatchDirs(
+		l,
+		watcher,
+		watchDirEvents,
+		quitWatchDirs,
 		watchDirsDone,
 	)
-	l.Errorf(logger.DEBUG, "Directory watch has begun")
+	l.Errorf(logger.DEBUG, "Watching directories")
 
+	// Start trapping signals and wait for the user to terminate the program.
 	go startTrapSignals(sigChan, trapSignalsDone)
-
-	l.Errorf(logger.DEBUG, "Waiting for quit signal")
 	<-trapSignalsDone
 	l.Errorf(logger.DEBUG, "Quit signal received")
 
-	// Signal the director watching process to quit and wait for it to
-	// signal completion.
-	watchDirsQuitChan <- true
+	// Signal the director watching process to quit and wait for completion.
+	quitWatchDirs <- true
 	<-watchDirsDone
 	l.Errorf(logger.DEBUG, "Directory watching processes completed")
+
+	// Signal the event processor to quit by closing its receiving channels
+	// and wait for it to signal completion.
+	close(watchDirEvents)
+	close(watchDirErrors)
+	<-eventProcessingDone
+	l.Errorf(logger.DEBUG, "Event processor completed")
 
 	// Signal the child process manager to quit by closing the file change
 	// channel and wait for it to signal completion.
 	close(fileChangedChan)
 	<-childProcManagerDone
-	l.Errorf(logger.DEBUG, "Child process manager done")
+	l.Errorf(logger.DEBUG, "Child process manager completed")
+}
+
+func startWatchDirs(l logger.Logger, w *fsnotify.Watcher, changes chan<- watchdirs.WatcherEvent, quit <-chan bool, done chan<- bool) {
+	defer func() {
+		done <- true
+	}()
+	for {
+		select {
+		case <-quit:
+			return
+		case ev, ok := <-w.Events:
+			if ok {
+				var ops []watchdirs.WatcherEventOp
+				if ev.Op.Has(fsnotify.Chmod) {
+					ops = append(ops, watchdirs.CHMOD)
+				}
+				if ev.Op.Has(fsnotify.Create) {
+					ops = append(ops, watchdirs.CREATE)
+				}
+				if ev.Op.Has(fsnotify.Remove) {
+					ops = append(ops, watchdirs.REMOVE)
+				}
+				if ev.Op.Has(fsnotify.Rename) {
+					ops = append(ops, watchdirs.RENAME)
+				}
+				if ev.Op.Has(fsnotify.Write) {
+					ops = append(ops, watchdirs.WRITE)
+				}
+				changes <- watchdirs.WatcherEvent{
+					Path: ev.Name,
+					Ops:  ops,
+				}
+			}
+		case err, ok := <-w.Errors:
+			if ok {
+				l.Errorf(logger.ERROR, "Error from fsnotify: %s", err)
+			}
+		}
+	}
 }
 
 func startTrapSignals(sigChan <-chan os.Signal, done chan<- bool) {
@@ -105,30 +178,6 @@ func startTrapSignals(sigChan <-chan os.Signal, done chan<- bool) {
 	<-sigChan
 }
 
-type fswatcherWrapper struct {
-	watcher *fsnotify.Watcher
-}
-
-// Events implements watchdirs.FilesystemWatcher.
-func (f *fswatcherWrapper) Events() chan fsnotify.Event {
-	return f.watcher.Events
-}
-
-// Errors implements watchdirs.FilesystemWatcher.
-func (f *fswatcherWrapper) Errors() chan error {
-	return f.watcher.Errors
-}
-
-// Add implements watchdirs.FilesystemWatcher.
-func (f *fswatcherWrapper) Add(name string) error {
-	return f.watcher.Add(name)
-}
-
-// Close implements watchdirs.FilesystemWatcher.
-func (f *fswatcherWrapper) Close() error {
-	return f.watcher.Close()
-}
-
 type watchdirsDeps struct {
 	logger logger.Logger
 }
@@ -136,17 +185,6 @@ type watchdirsDeps struct {
 // Logger implements watchdirs.Dependencies.
 func (w *watchdirsDeps) Logger() logger.Logger {
 	return w.logger
-}
-
-// NewFilesystemWatcher implements watchdirs.Dependencies.
-func (w *watchdirsDeps) NewFilesystemWatcher() (watchdirs.FilesystemWatcher, error) {
-	if w, err := fsnotify.NewWatcher(); err != nil {
-		return nil, fmt.Errorf("creating fsnotify.Watcher: %w", err)
-	} else {
-		return &fswatcherWrapper{
-			watcher: w,
-		}, nil
-	}
 }
 
 func newWatchDirsDeps(l logger.Logger) watchdirs.Dependencies {

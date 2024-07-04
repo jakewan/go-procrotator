@@ -23,3 +23,5 @@ Execute within the server application directory:
 ```shell
 go-procrotator
 ```
+
+Press CTRL+C to quit.

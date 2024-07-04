@@ -64,7 +64,7 @@ func StartChildProcess(
 		st.locker.Lock()
 		defer st.locker.Unlock()
 		if err := startChildProcess(l, cfg, &st); err != nil {
-			l.Errorf(logger.ERROR, "Error starting server process: %w", err)
+			l.Errorf(logger.ERROR, "Error starting server process: %s", err)
 		}
 	}()
 
@@ -76,7 +76,7 @@ func StartChildProcess(
 		st.locker.Lock()
 		defer st.locker.Unlock()
 		if err := stopChildProcess(l, cfg, &st); err != nil {
-			l.Errorf(logger.ERROR, "Error stopping child process: %w", err)
+			l.Errorf(logger.ERROR, "Error stopping child process: %s", err)
 		}
 	}()
 }
@@ -91,9 +91,9 @@ func handleEvent(
 	elapsed := time.Since(st.lastRestartAt)
 	if elapsed > st.minRestartInterval {
 		if err := stopChildProcess(l, cfg, st); err != nil {
-			l.Errorf(logger.DEBUG, "Error stopping current child process: %w", err)
+			l.Errorf(logger.DEBUG, "Error stopping current child process: %s", err)
 		} else if err := startChildProcess(l, cfg, st); err != nil {
-			l.Errorf(logger.DEBUG, "Error starting new child process: %w", err)
+			l.Errorf(logger.DEBUG, "Error starting new child process: %s", err)
 		}
 		st.lastRestartAt = time.Now()
 	} else {
