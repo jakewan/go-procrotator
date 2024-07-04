@@ -5,7 +5,7 @@ Restart a server process when certain files change.
 Install:
 
 ```shell
-go install github.com/jakewan/go-procrotator
+go install github.com/jakewan/go-procrotator@v1
 ```
 
 Add a configuration file named `procrotator.toml` or `.procrotator.toml` to the root directory of the target software project.
