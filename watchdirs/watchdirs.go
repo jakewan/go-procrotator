@@ -3,85 +3,79 @@ package watchdirs
 import (
 	"regexp"
 	"slices"
-	"strings"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/jakewan/go-procrotator/logger"
 )
 
 type (
 	Dependencies interface {
 		Logger() logger.Logger
-		NewFilesystemWatcher() (FilesystemWatcher, error)
-	}
-	FilesystemWatcher interface {
-		Add(string) error
-		Events() chan fsnotify.Event
-		Errors() chan error
-		Close() error
 	}
 	FileChangedEvent struct {
 		Path string
 	}
 )
 
-func StartWatchDirs(
+func StartEventProcessing(
 	deps Dependencies,
-	dirs []string,
 	includeFileRegexes []regexp.Regexp,
 	excludeFileRegexes []regexp.Regexp,
 	fileChangedChan chan<- FileChangedEvent,
-	errors chan<- error,
-	quit <-chan bool,
+	changes <-chan WatcherEvent,
+	errors <-chan error,
 	done chan<- bool,
 ) {
 	defer func() {
 		done <- true
 	}()
 	l := deps.Logger()
-	l.Errorf(
-		logger.INFO,
-		"Watching directories:\n%s",
-		strings.Join(dirs, "\n"),
-	)
-	if watcher, err := deps.NewFilesystemWatcher(); err != nil {
-		l.Errorf(logger.DEBUG, "Sending child error: %s", err)
-		errors <- err
-	} else {
-		defer watcher.Close()
-		for _, d := range dirs {
-			if err := watcher.Add(d); err != nil {
-				errors <- err
-				return
-			}
-		}
-		for {
-			select {
-			case <-quit:
-				return
-			case ev, ok := <-watcher.Events():
-				if !ok {
-					return
-				}
-				// Check the filename against the list of include regexes.
-				if slices.IndexFunc(includeFileRegexes, func(r regexp.Regexp) bool {
-					return r.MatchString(ev.Name)
-				}) > -1 {
-					l.Errorf(logger.DEBUG, "File is included: %s", ev.Name)
-					if slices.IndexFunc(excludeFileRegexes, func(r regexp.Regexp) bool {
-						return r.MatchString(ev.Name)
-					}) > -1 {
-						l.Errorf(logger.DEBUG, "File is excluded: %s", ev.Name)
-					} else {
-						fileChangedChan <- FileChangedEvent{Path: ev.Name}
+	includeOps := []WatcherEventOp{
+		CREATE,
+		REMOVE,
+		RENAME,
+		WRITE,
+	}
+	for {
+		select {
+		case ev, ok := <-changes:
+			if ok {
+				l.Errorf(logger.DEBUG, "Event: %v", ev)
+				shouldReport := false
+				for _, op := range ev.Ops {
+					if slices.Contains(includeOps, op) {
+						shouldReport = true
+						break
 					}
 				}
-			case err, ok := <-watcher.Errors():
-				if !ok {
-					return
+				if shouldReport {
+					// Check the filename against the list of include regexes.
+					if slices.IndexFunc(includeFileRegexes, func(r regexp.Regexp) bool {
+						return r.MatchString(ev.Path)
+					}) > -1 {
+						l.Errorf(logger.DEBUG, "File is included: %s", ev.Path)
+						if slices.IndexFunc(excludeFileRegexes, func(r regexp.Regexp) bool {
+							return r.MatchString(ev.Path)
+						}) > -1 {
+							l.Errorf(logger.DEBUG, "File is excluded: %s", ev.Path)
+						} else {
+							fileChangedChan <- FileChangedEvent{Path: ev.Path}
+						}
+					}
+				} else {
+					l.Errorf(logger.DEBUG, "Skipping %s events for %s", ev.Ops, ev.Path)
 				}
-				errors <- err
+			} else {
+				changes = nil
 			}
+		case err, ok := <-errors:
+			if ok {
+				l.Errorf(logger.ERROR, "Error watching directories: %s", err)
+			} else {
+				errors = nil
+			}
+		}
+		if changes == nil && errors == nil {
+			break
 		}
 	}
 }
