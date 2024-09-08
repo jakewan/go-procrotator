@@ -115,16 +115,24 @@ func stopChildProcess(l logger.Logger, cfg runtimeconfig.Config, st *state) erro
 		l.Errorf(logger.INFO, "Stopping child process")
 		st.currentProcState = procStateStopping
 		shutdownStaredAt := time.Now()
+		success := func() error {
+			st.currentProcState = procStateNotStarted
+			l.Errorf(logger.DEBUG, "Child process quit in %s", time.Since(shutdownStaredAt))
+			return nil
+		}
+		isSigint := cfg.QuitSignal() == syscall.SIGINT
 		if err := st.cmd.Process.Signal(cfg.QuitSignal()); err != nil {
 			return fmt.Errorf("sending signal to child process: %w", err)
 		} else if st.cmd == nil {
 			return errors.New("child process should not be nil")
 		} else if err := st.cmd.Wait(); err != nil {
+			if isSigint && strings.Contains(err.Error(), "signal: interrupt") {
+				l.Errorf(logger.DEBUG, "Child process quit with SIGINT")
+				return success()
+			}
 			return fmt.Errorf("waiting for child process to finish: %w", err)
 		} else {
-			st.currentProcState = procStateNotStarted
-			l.Errorf(logger.DEBUG, "Child process quit in %s", time.Since(shutdownStaredAt))
-			return nil
+			return success()
 		}
 	} else if st.currentProcState == procStateNotStarted {
 		l.Errorf(logger.WARNING, "Current process state: not started")
