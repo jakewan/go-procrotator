@@ -2,12 +2,6 @@
 name: Static Checks - Go
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - '**/go.*'
-      - '**.go'
   pull_request:
     paths:
       - '**/go.*'
@@ -28,13 +22,12 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.23'
 
       - name: Test
         run: make go-test
 
-      - name: Vet
-        run: make go-vet
-
-      - name: Staticcheck
-        run: make go-staticcheck
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
